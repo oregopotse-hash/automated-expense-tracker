@@ -1,102 +1,204 @@
+import streamlit as st
 import sqlite3
 from datetime import datetime
 
-DATABASE = "expenses.db"
+st.set_page_config(
+    page_title="AI Automation Portfolio",
+    page_icon="🤖",
+    layout="wide"
+)
+
+# -----------------------------
+# Database setup
+# -----------------------------
+
+DB_NAME = "automation.db"
 
 
-def connect():
-    return sqlite3.connect(DATABASE)
+def get_connection():
+    return sqlite3.connect(DB_NAME)
 
 
-def create_database():
-    connection = connect()
-    cursor = connection.cursor()
+def create_table():
+    conn = get_connection()
+    cursor = conn.cursor()
 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS expenses (
+        CREATE TABLE IF NOT EXISTS automation_tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            description TEXT NOT NULL,
-            amount REAL NOT NULL,
-            category TEXT NOT NULL
+            task TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
         )
     """)
 
-    connection.commit()
-    connection.close()
+    conn.commit()
+    conn.close()
 
 
-def categorise_expense(description):
-    description = description.lower()
+def add_task(task):
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    categories = {
-        "Food": ["food", "restaurant", "takeaway", "groceries", "grocery"],
-        "Transport": ["taxi", "uber", "fuel", "petrol", "transport", "bus"],
-        "Bills": ["electricity", "water", "internet", "rent", "phone"],
-        "Shopping": ["clothes", "shoes", "shopping", "mall"],
-        "Entertainment": ["movie", "cinema", "games", "entertainment"]
-    }
+    cursor.execute(
+        """
+        INSERT INTO automation_tasks (task, status, created_at)
+        VALUES (?, ?, ?)
+        """,
+        (task, "Pending", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    )
 
-    for category, keywords in categories.items():
-        for keyword in keywords:
-            if keyword in description:
-                return category
-
-    return "Other"
+    conn.commit()
+    conn.close()
 
 
-def add_expense(description, amount):
-    category = categorise_expense(description)
-    date = datetime.now().strftime("%Y-%m-%d")
-
-    connection = connect()
-    cursor = connection.cursor()
+def get_tasks():
+    conn = get_connection()
+    cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO expenses (date, description, amount, category)
-        VALUES (?, ?, ?, ?)
-    """, (date, description, amount, category))
-
-    connection.commit()
-    connection.close()
-
-    print(f"Expense added: {description} - R{amount:.2f} ({category})")
-
-
-def show_summary():
-    connection = connect()
-    cursor = connection.cursor()
-
-    cursor.execute("""
-        SELECT category, SUM(amount)
-        FROM expenses
-        GROUP BY category
-        ORDER BY SUM(amount) DESC
+        SELECT id, task, status, created_at
+        FROM automation_tasks
+        ORDER BY id DESC
     """)
 
-    results = cursor.fetchall()
+    tasks = cursor.fetchall()
+    conn.close()
 
-    print("\nSpending Summary")
-    print("----------------")
-
-    total = 0
-
-    for category, amount in results:
-        print(f"{category}: R{amount:.2f}")
-        total += amount
-
-    print("----------------")
-    print(f"Total: R{total:.2f}")
-
-    connection.close()
+    return tasks
 
 
-if __name__ == "__main__":
-    create_database()
+def update_task(task_id, status):
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    add_expense("Groceries", 450)
-    add_expense("Petrol", 300)
-    add_expense("Internet bill", 699)
-    add_expense("New shoes", 800)
+    cursor.execute(
+        """
+        UPDATE automation_tasks
+        SET status = ?
+        WHERE id = ?
+        """,
+        (status, task_id)
+    )
 
-    show_summary()
+    conn.commit()
+    conn.close()
+
+
+def delete_task(task_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "DELETE FROM automation_tasks WHERE id = ?",
+        (task_id,)
+    )
+
+    conn.commit()
+    conn.close()
+
+
+# Create database table
+create_table()
+
+
+# -----------------------------
+# Application interface
+# -----------------------------
+
+st.title("🤖 AI Automation Portfolio")
+
+st.write(
+    "A simple Streamlit web application for managing automation tasks."
+)
+
+st.divider()
+
+# Add task
+st.subheader("➕ Add Automation Task")
+
+with st.form("task_form"):
+    task = st.text_input(
+        "Task description",
+        placeholder="Example: Send automated weekly report"
+    )
+
+    submitted = st.form_submit_button("Add Task")
+
+    if submitted:
+        if task.strip():
+            add_task(task.strip())
+            st.success("Task added successfully.")
+            st.rerun()
+        else:
+            st.warning("Please enter a task.")
+
+
+st.divider()
+
+# Dashboard
+st.subheader("📊 Automation Dashboard")
+
+tasks = get_tasks()
+
+total_tasks = len(tasks)
+completed_tasks = len(
+    [task for task in tasks if task[2] == "Completed"]
+)
+pending_tasks = total_tasks - completed_tasks
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("Total Tasks", total_tasks)
+
+with col2:
+    st.metric("Completed", completed_tasks)
+
+with col3:
+    st.metric("Pending", pending_tasks)
+
+
+st.divider()
+
+# Task list
+st.subheader("📋 Automation Tasks")
+
+if not tasks:
+    st.info("No automation tasks have been added yet.")
+else:
+    for task_id, task_name, status, created_at in tasks:
+
+        with st.container(border=True):
+            col1, col2, col3 = st.columns([5, 2, 1])
+
+            with col1:
+                st.write(f"**{task_name}**")
+                st.caption(f"Created: {created_at}")
+
+            with col2:
+                new_status = st.selectbox(
+                    "Status",
+                    ["Pending", "Completed"],
+                    index=0 if status == "Pending" else 1,
+                    key=f"status_{task_id}"
+                )
+
+                if new_status != status:
+                    update_task(task_id, new_status)
+                    st.rerun()
+
+            with col3:
+                if st.button(
+                    "Delete",
+                    key=f"delete_{task_id}"
+                ):
+                    delete_task(task_id)
+                    st.rerun()
+
+
+st.divider()
+
+st.caption(
+    "Built with Python, SQLite and Streamlit."
+)
